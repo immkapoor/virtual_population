@@ -1,0 +1,11 @@
+streamlit
+torch
+numpy
+pandas
+plotly
+scipy
+matplotlib
+geopandas
+shapely
+pyproj
+pyogrio
