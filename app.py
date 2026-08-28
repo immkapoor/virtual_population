@@ -19,6 +19,7 @@ Evaluation is intentionally separate from virtual generation.
 import os
 import math
 import importlib.util
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -42,20 +43,97 @@ st.caption(
     "context is updated during autoregressive generation."
 )
 
+# Deployment sanity check: if this appears only once, the app is not recursively importing itself.
+st.caption("Deployment mode: backend self-import protection enabled.")
+
 
 # ============================================================
 # Import training/backend module
 # ============================================================
 
+def resolve_local_file(path):
+    """
+    Resolve a project file robustly.
+
+    Search order:
+      1. path exactly as entered
+      2. relative to this Streamlit app
+      3. one directory above the app
+      4. two directories above the app
+      5. three directories above the app
+    """
+    raw = Path(path).expanduser()
+
+    candidates = []
+
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(Path.cwd() / raw)
+
+        app_dir = Path(__file__).resolve().parent
+
+        candidates.extend(
+            [
+                app_dir / raw,
+                app_dir.parent / raw,
+                app_dir.parent.parent / raw,
+                app_dir.parent.parent.parent / raw,
+            ]
+        )
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate.resolve()
+        except Exception:
+            pass
+
+    searched = "\n".join(
+        f"  - {c}"
+        for c in candidates
+    )
+
+    raise FileNotFoundError(
+        f"Could not find file: {path}\n"
+        f"Searched:\n{searched}"
+    )
+
+
 def import_backend(
     path,
 ):
+    resolved = resolve_local_file(
+        path
+    )
+
+    this_app = Path(
+        __file__
+    ).resolve()
+
+    if resolved == this_app:
+        raise ValueError(
+            "The multivariate backend points to the Streamlit app itself:\n"
+            f"  {resolved}\n\n"
+            "Choose the TRAINING/BACKEND file instead, for example:\n"
+            "  multivariate_rnn_virtual_trips.py\n\n"
+            "Do not use app.py as the backend."
+        )
+
     spec = importlib.util.spec_from_file_location(
         "multi_rnn_backend",
-        os.path.abspath(
-            path
+        str(
+            resolved
         ),
     )
+
+    if (
+        spec is None
+        or spec.loader is None
+    ):
+        raise ImportError(
+            f"Could not import multivariate backend: {resolved}"
+        )
 
     module = importlib.util.module_from_spec(
         spec
@@ -71,12 +149,34 @@ def import_backend(
 def import_univariate_backend(
     path,
 ):
+    resolved = resolve_local_file(
+        path
+    )
+
+    this_app = Path(
+        __file__
+    ).resolve()
+
+    if resolved == this_app:
+        raise ValueError(
+            "The geographic backend points to the Streamlit app itself. "
+            "Choose univariate_rnn_virtual_trips.py instead of app.py."
+        )
+
     spec = importlib.util.spec_from_file_location(
         "univariate_geo_backend",
-        os.path.abspath(
-            path
+        str(
+            resolved
         ),
     )
+
+    if (
+        spec is None
+        or spec.loader is None
+    ):
+        raise ImportError(
+            f"Could not import geographic backend: {resolved}"
+        )
 
     module = importlib.util.module_from_spec(
         spec
@@ -1204,34 +1304,42 @@ with st.sidebar:
         "Model and data"
     )
 
-    multi_backend_file = st.text_input(
-        "Python file",
-        "app.py",
+    # Deployment-safe backend names.
+    # These are intentionally NOT editable in the GUI, so app.py
+    # can never accidentally import itself.
+    multi_backend_file = "multivariate_rnn_virtual_trips.py"
+    geo_backend_file = "univariate_rnn_virtual_trips.py"
+
+    st.caption(
+        "Multivariate backend: multivariate_rnn_virtual_trips.py"
     )
 
-    geo_backend_file = st.text_input(
-        "Geographic constraint backend",
-        "univariate_rnn_virtual_trips.py",
+    st.caption(
+        "Geographic backend: univariate_rnn_virtual_trips.py"
     )
 
     checkpoint_file = st.text_input(
         "Multivariate .pt",
-        "multivariate_rnn_model.pt",
+        "multivariate_rnn_2010_13/multivariate_rnn_model.pt",
+        key="multi_checkpoint_file",
     )
 
     trip_file = st.text_input(
         "Trip/context CSV",
         "social_cues_2010_13_haulout_trips.csv",
+        key="multi_trip_file",
     )
 
     haulout_file = st.text_input(
         "Haulout CSV",
         "Clean_IRO_HAULOUT_2010-13_spatial.csv",
+        key="multi_haulout_file",
     )
 
     land_file = st.text_input(
         "Land shapefile",
         "./Land_polygons/highres_map.shp",
+        key="multi_land_file",
     )
 
     device_choice = st.selectbox(
@@ -1240,12 +1348,14 @@ with st.sidebar:
             "CUDA",
             "CPU",
         ],
+        key="multi_device_choice",
     )
 
     load = st.button(
         "Load multivariate model",
         type="primary",
         use_container_width=True,
+        key="load_multivariate_model",
     )
 
 
@@ -1270,12 +1380,16 @@ if load:
                 device,
             ) = load_checkpoint(
                 backend,
-                checkpoint_file,
+                str(resolve_local_file(checkpoint_file)),
                 device_choice,
             )
 
+            resolved_trip_file = resolve_local_file(
+                trip_file
+            )
+
             df = backend.load_trips(
-                trip_file,
+                str(resolved_trip_file),
                 gap_hours=24.0,
             )
 
@@ -1321,12 +1435,20 @@ if load:
             )
 
             haulouts = geo.load_haulouts(
-                haulout_file
+                str(
+                    resolve_local_file(
+                        haulout_file
+                    )
+                )
             )
 
             land = (
                 geo.LandMask(
-                    land_file
+                    str(
+                        resolve_local_file(
+                            land_file
+                        )
+                    )
                 )
                 if land_file.strip()
                 else None
