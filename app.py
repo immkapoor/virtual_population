@@ -1320,7 +1320,7 @@ with st.sidebar:
 
     checkpoint_file = st.text_input(
         "Multivariate .pt",
-        "multivariate_rnn_2010_13/multivariate_rnn_model.pt",
+        "multivariate_rnn_model.pt",
         key="multi_checkpoint_file",
     )
 
